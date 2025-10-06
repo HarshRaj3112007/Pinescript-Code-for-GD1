@@ -1,0 +1,124 @@
+//@version=6
+strategy("ETH Aggressive Trend Strategy", overlay=true, initial_capital=1000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, calc_on_every_tick=false)
+
+// ============================================
+// INPUTS
+// ============================================
+emaFast = input.int(9, "Fast EMA", minval=1)
+emaMid = input.int(21, "Mid EMA", minval=1)
+emaSlow = input.int(50, "Slow EMA", minval=1)
+
+rsiLength = input.int(14, "RSI Length")
+rsiThreshold = input.int(55, "RSI Bullish Threshold")
+
+atrLength = input.int(14, "ATR Length")
+atrMultiplier = input.float(2.5, "Stop Loss ATR Multiplier")
+takeProfitMultiplier = input.float(4.0, "Take Profit ATR Multiplier")
+
+// Volume filter
+volMultiplier = input.float(1.2, "Volume Multiplier", minval=0.5)
+
+// ============================================
+// CALCULATIONS
+// ============================================
+emaF = ta.ema(close, emaFast)
+emaM = ta.ema(close, emaMid)
+emaS = ta.ema(close, emaSlow)
+
+rsi = ta.rsi(close, rsiLength)
+atr = ta.atr(atrLength)
+
+// Volume condition
+avgVolume = ta.sma(volume, 20)
+highVolume = volume > avgVolume * volMultiplier
+
+// Trend strength
+trendUp = emaF > emaM and emaM > emaS
+trendDown = emaF < emaM and emaM < emaS
+
+// Price momentum
+priceAboveEMA = close > emaF and close > emaM
+priceBelowEMA = close < emaF and close < emaM
+
+// Strong bullish conditions
+bullishCross = ta.crossover(emaF, emaM)
+bullishAlignment = trendUp and priceAboveEMA
+rsiBullish = rsi > rsiThreshold and rsi < 80
+
+// Strong bearish conditions  
+bearishCross = ta.crossunder(emaF, emaM)
+bearishAlignment = trendDown and priceBelowEMA
+rsiBearish = rsi < (100 - rsiThreshold) and rsi > 20
+
+// ============================================
+// ENTRY CONDITIONS
+// ============================================
+longCondition = (bullishCross or (bullishAlignment and rsiBullish and ta.crossover(close, emaF))) and highVolume
+
+shortCondition = (bearishCross or (bearishAlignment and rsiBearish and ta.crossunder(close, emaF))) and highVolume
+
+// ============================================
+// POSITION MANAGEMENT WITH STOPS
+// ============================================
+var float longStopLoss = na
+var float longTakeProfit = na
+var float shortStopLoss = na
+var float shortTakeProfit = na
+
+if longCondition
+    longStopLoss := close - (atr * atrMultiplier)
+    longTakeProfit := close + (atr * takeProfitMultiplier)
+    strategy.entry("Long", strategy.long)
+    
+if shortCondition
+    shortStopLoss := close + (atr * atrMultiplier)
+    shortTakeProfit := close - (atr * takeProfitMultiplier)
+    strategy.entry("Short", strategy.short)
+
+// Exit conditions
+if strategy.position_size > 0
+    strategy.exit("Exit Long", "Long", stop=longStopLoss, limit=longTakeProfit)
+    // Additional exit: momentum loss
+    if ta.crossunder(emaF, emaM) or rsi < 40
+        strategy.close("Long")
+
+if strategy.position_size < 0
+    strategy.exit("Exit Short", "Short", stop=shortStopLoss, limit=shortTakeProfit)
+    // Additional exit: momentum loss
+    if ta.crossover(emaF, emaM) or rsi > 60
+        strategy.close("Short")
+
+// ============================================
+// VISUALIZATION
+// ============================================
+plot(emaF, "Fast EMA", color=color.new(color.aqua, 0), linewidth=2)
+plot(emaM, "Mid EMA", color=color.new(color.orange, 0), linewidth=2)
+plot(emaS, "Slow EMA", color=color.new(color.red, 0), linewidth=1)
+
+// Plot entry signals
+plotshape(longCondition, "LONG", shape.triangleup, location.belowbar, color.new(color.lime, 0), size=size.normal)
+plotshape(shortCondition, "SHORT", shape.triangledown, location.abovebar, color.new(color.red, 0), size=size.normal)
+
+// Plot stop loss and take profit levels
+plot(strategy.position_size > 0 ? longStopLoss : na, "Stop Loss", color.red, 2, plot.style_linebr)
+plot(strategy.position_size > 0 ? longTakeProfit : na, "Take Profit", color.green, 2, plot.style_linebr)
+plot(strategy.position_size < 0 ? shortStopLoss : na, "Stop Loss", color.red, 2, plot.style_linebr)
+plot(strategy.position_size < 0 ? shortTakeProfit : na, "Take Profit", color.green, 2, plot.style_linebr)
+
+// Trend background
+bgcolor(trendUp ? color.new(color.green, 92) : trendDown ? color.new(color.red, 92) : na)
+
+// Table for quick stats
+var table statsTable = table.new(position.top_right, 2, 4, border_width=1)
+if barstate.islastconfirmedhistory
+    table.cell(statsTable, 0, 0, "Metric", bgcolor=color.gray, text_color=color.white)
+    table.cell(statsTable, 1, 0, "Value", bgcolor=color.gray, text_color=color.white)
+    table.cell(statsTable, 0, 1, "Trend", bgcolor=color.new(color.blue, 70))
+    table.cell(statsTable, 1, 1, trendUp ? "🔼 UP" : trendDown ? "🔽 DOWN" : "↔ NEUTRAL", 
+               bgcolor=trendUp ? color.new(color.green, 70) : trendDown ? color.new(color.red, 70) : color.new(color.gray, 70))
+    table.cell(statsTable, 0, 2, "RSI", bgcolor=color.new(color.blue, 70))
+    table.cell(statsTable, 1, 2, str.tostring(math.round(rsi, 1)), 
+               bgcolor=rsi > 70 ? color.new(color.red, 70) : rsi < 30 ? color.new(color.green, 70) : color.new(color.gray, 70))
+    table.cell(statsTable, 0, 3, "Volume", bgcolor=color.new(color.blue, 70))
+    table.cell(statsTable, 1, 3, highVolume ? "✓ HIGH" : "✗ LOW", 
+               bgcolor=highVolume ? color.new(color.green, 70) : color.new(color.orange, 70))
